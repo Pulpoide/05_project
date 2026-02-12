@@ -21,7 +21,7 @@ graph TD
     A[User Query] --> B{Orquestador}
     B -->|Intent: HR| C[Especialista RRHH - RAG Semántico]
     B -->|Intent: TECH| D[Especialista Tech - RAG Semántico]
-    B -->|Intent: BRUJO| E[Brujo Cordobés - Direct LLM]
+    B -->|Intent: BRUJO| E[Brujo - Direct LLM]
     B -->|Intent: UNKNOWN| F[Fallback Guardrail]
     C --> G[Respuesta Unificada]
     D --> G
