@@ -5,12 +5,16 @@ from __future__ import annotations
 import time
 
 from langchain_core.language_models.chat_models import BaseChatModel
-from langchain_core.runnables import Runnable, RunnableBranch, RunnableLambda, RunnableParallel
+from langchain_core.runnables import (
+    Runnable,
+    RunnableBranch,
+    RunnableLambda,
+    RunnableParallel,
+)
 
 from .intent_classifier import build_intent_classifier
-from .prompts import UNKNOWN_FALLBACK_TEXT
+from .prompts import UNKNOWN_FALLBACK_TEXT, BRUJO_AGENT_PROMPT
 from .schemas import IntentLabel, RoutedResponse
-
 
 
 def build_orchestrator(
@@ -41,6 +45,36 @@ def build_orchestrator(
         intent=intent_chain,
     )
 
+    def call_brujo(query: str) -> dict:
+        # Invocamos al LLM directamente
+        response = llm.invoke(
+            [
+                {"role": "system", "content": BRUJO_AGENT_PROMPT},
+                {"role": "user", "content": query},
+            ]
+        )
+
+        # Devolvemos el formato que el envelope espera
+        return {
+            "answer": response.content,
+            "citations": [],  # No hay citas porque no hay RAG
+            "confidence": 1.0,
+            "follow_up_question": "¿Quieres saber qué dicen los astros sobre otro tema? 🔮",
+            "retrieval_hits": 0,
+            "evidence_notes": [
+                "Respuesta generada por sabiduría astral (LLM Directo)."
+            ],
+        }
+
+    brujo_route = RunnableLambda(
+        lambda x: {
+            "intent": x["intent"],
+            "rag": call_brujo(x["payload"]["query"]),
+            "route_used": "brujo_specialist",
+            "payload": x["payload"],
+        }
+    )
+
     hr_route = RunnableLambda(
         lambda x: {
             "intent": x["intent"],
@@ -66,21 +100,34 @@ def build_orchestrator(
                 "answer": UNKNOWN_FALLBACK_TEXT,
                 "citations": [],
                 "confidence": 0.35,
-                "follow_up_question": "Puedes detallar si tu consulta es de RRHH o de Tecnologia?",
+                "follow_up_question": "¿Tu duda es técnica, de recursos humanos o mística? ✨",
                 "retrieval_hits": 0,
-                "evidence_notes": ["No retrieval executed due to low-confidence routing."],
+                "evidence_notes": ["No retrieval executed due to out-of-scope query."],
             },
         }
     )
 
     router = RunnableBranch(
         (
-            lambda x: x["intent"].intent == IntentLabel.HR and x["intent"].confidence >= intent_min_confidence,
+            lambda x: (
+                x["intent"].intent == IntentLabel.HR
+                and x["intent"].confidence >= intent_min_confidence
+            ),
             hr_route,
         ),
         (
-            lambda x: x["intent"].intent == IntentLabel.TECH and x["intent"].confidence >= intent_min_confidence,
+            lambda x: (
+                x["intent"].intent == IntentLabel.TECH
+                and x["intent"].confidence >= intent_min_confidence
+            ),
             tech_route,
+        ),
+        (
+            lambda x: (
+                x["intent"].intent == IntentLabel.BRUJO
+                and x["intent"].confidence >= intent_min_confidence
+            ),
+            brujo_route,
         ),
         unknown_route,
     )
@@ -89,12 +136,22 @@ def build_orchestrator(
         intent = payload["intent"]
         rag = payload["rag"]
         request_payload = payload.get("payload", {})
-        processing_ms = int((time.perf_counter() - request_payload.get("_start_ts", time.perf_counter())) * 1000)
+        processing_ms = int(
+            (
+                time.perf_counter()
+                - request_payload.get("_start_ts", time.perf_counter())
+            )
+            * 1000
+        )
         retrieval_hits = (
-            rag.get("retrieval_hits", 0) if isinstance(rag, dict) else getattr(rag, "retrieval_hits", 0)
+            rag.get("retrieval_hits", 0)
+            if isinstance(rag, dict)
+            else getattr(rag, "retrieval_hits", 0)
         )
         evidence_notes = (
-            rag.get("evidence_notes", []) if isinstance(rag, dict) else getattr(rag, "evidence_notes", [])
+            rag.get("evidence_notes", [])
+            if isinstance(rag, dict)
+            else getattr(rag, "evidence_notes", [])
         )
 
         return RoutedResponse(
@@ -104,7 +161,9 @@ def build_orchestrator(
             answer=rag["answer"] if isinstance(rag, dict) else rag.answer,
             citations=rag["citations"] if isinstance(rag, dict) else rag.citations,
             follow_up_question=(
-                rag["follow_up_question"] if isinstance(rag, dict) else rag.follow_up_question
+                rag["follow_up_question"]
+                if isinstance(rag, dict)
+                else rag.follow_up_question
             ),
             route_used=payload["route_used"],
             conversation_id=request_payload.get("conversation_id", "n/a"),

@@ -10,6 +10,7 @@ from pydantic import BaseModel, Field
 class IntentLabel(str, Enum):
     HR = "HR"
     TECH = "TECH"
+    BRUJO = "BRUJO"
     UNKNOWN = "UNKNOWN"
 
 
